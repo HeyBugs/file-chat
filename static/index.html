@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>file-chat</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101114;
+      --panel: #1a1c22;
+      --line: #2c303a;
+      --text: #ececec;
+      --muted: #9aa3b2;
+      --accent: #7eb8ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Segoe UI, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 320px 1fr;
+    }
+    aside, main { min-height: 0; }
+    aside {
+      border-right: 1px solid var(--line);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: var(--panel);
+    }
+    h1 { font-size: 18px; margin: 0; }
+    p, label { color: var(--muted); font-size: 13px; }
+    input, button, textarea {
+      font: inherit;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      background: #111318;
+      color: var(--text);
+    }
+    button {
+      padding: 10px 12px;
+      background: var(--accent);
+      color: #0b1220;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    .status { font-size: 12px; }
+    .ok { color: #8ee0a8; }
+    .bad { color: #ff9b9b; }
+    .files {
+      overflow: auto;
+      flex: 1;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+    main {
+      display: flex;
+      flex-direction: column;
+    }
+    #log {
+      flex: 1;
+      overflow: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .msg {
+      max-width: 760px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+    .user { background: #243044; align-self: flex-end; }
+    .assistant { background: #181b22; border: 1px solid var(--line); }
+    .think {
+      color: var(--muted);
+      font-size: 12px;
+      border-left: 2px solid var(--line);
+      padding-left: 8px;
+      margin-bottom: 8px;
+    }
+    form {
+      display: flex;
+      gap: 8px;
+      padding: 16px;
+      border-top: 1px solid var(--line);
+    }
+    textarea {
+      flex: 1;
+      min-height: 52px;
+      resize: none;
+      padding: 12px;
+      background: #111318;
+      color: var(--text);
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <h1>file-chat</h1>
+    <p>Uses local Ollama <code>deepseek-r1:32b</code> and files from a folder on this PC.</p>
+    <div id="ollama" class="status">Checking Ollama…</div>
+    <label for="folder">Folder path</label>
+    <input id="folder" placeholder="C:\Users\matth\Documents\Resume" />
+    <button id="indexBtn" type="button">Index folder</button>
+    <div id="indexStatus" class="status"></div>
+    <div class="files" id="files"></div>
+  </aside>
+  <main>
+    <div id="log"></div>
+    <form id="chat">
+      <textarea id="message" placeholder="Ask about the files…" required></textarea>
+      <button type="submit">Send</button>
+    </form>
+  </main>
+  <script>
+    const log = document.getElementById("log");
+    const filesEl = document.getElementById("files");
+    const history = [];
+
+    function splitThink(text) {
+      const match = text.match(/<think>([\s\S]*?)<\/think>/);
+      if (!match) return { think: "", answer: text.replace(/<think>[\s\S]*/, "").trim() };
+      return { think: match[1].trim(), answer: text.replace(match[0], "").trim() };
+    }
+
+    function addMessage(role, text) {
+      const el = document.createElement("div");
+      el.className = `msg ${role}`;
+      if (role === "assistant") {
+        const { think, answer } = splitThink(text);
+        el.innerHTML = "";
+        if (think) {
+          const t = document.createElement("div");
+          t.className = "think";
+          t.textContent = think;
+          el.appendChild(t);
+        }
+        el.appendChild(document.createTextNode(answer || text));
+      } else {
+        el.textContent = text;
+      }
+      log.appendChild(el);
+      log.scrollTop = log.scrollHeight;
+      return el;
+    }
+
+    async function refreshStatus() {
+      const res = await fetch("/api/status");
+      const data = await res.json();
+      const ollama = document.getElementById("ollama");
+      ollama.className = "status " + (data.ollama ? "ok" : "bad");
+      ollama.textContent = data.ollama
+        ? `Ollama ready · ${data.chat_model}`
+        : "Ollama is not reachable on localhost:11434";
+      if (data.folder) {
+        document.getElementById("folder").value = data.folder;
+        filesEl.textContent = `${data.chunk_count} chunks from:\n` + data.files.join("\n");
+      }
+    }
+
+    document.getElementById("indexBtn").onclick = async () => {
+      const folder = document.getElementById("folder").value.trim();
+      const status = document.getElementById("indexStatus");
+      const btn = document.getElementById("indexBtn");
+      btn.disabled = true;
+      status.textContent = "Reading files and embedding… this can take a minute.";
+      try {
+        const res = await fetch("/api/index", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folder }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Index failed");
+        status.textContent = `Indexed ${data.files.length} files (${data.chunk_count} chunks).`;
+        filesEl.textContent = data.files.join("\n");
+      } catch (err) {
+        status.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    document.getElementById("chat").onsubmit = async (event) => {
+      event.preventDefault();
+      const input = document.getElementById("message");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      addMessage("user", text);
+      const assistant = addMessage("assistant", "Waiting for deepseek-r1:32b… first replies can take a minute.");
+      let full = "";
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, history }),
+      });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop();
+        for (const part of parts) {
+          if (!part.startsWith("data: ")) continue;
+          const payload = JSON.parse(part.slice(6));
+          if (payload.error) {
+            assistant.textContent = payload.error;
+            return;
+          }
+          if (payload.token) {
+            full += payload.token;
+            const { think, answer } = splitThink(full);
+            assistant.innerHTML = "";
+            if (think || full.includes("<think>")) {
+              const t = document.createElement("div");
+              t.className = "think";
+              t.textContent = think || "Thinking…";
+              assistant.appendChild(t);
+            }
+            assistant.appendChild(document.createTextNode(answer));
+            log.scrollTop = log.scrollHeight;
+          }
+        }
+      }
+      history.push({ role: "user", content: text });
+      history.push({ role: "assistant", content: splitThink(full).answer || full });
+    };
+
+    refreshStatus();
+  </script>
+</body>
+</html>
