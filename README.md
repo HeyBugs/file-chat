@@ -1,6 +1,6 @@
 # file-chat
 
-Local chat UI for **deepseek-r1:32b** through Ollama. Point it at a folder (resume, notes, PDFs) and ask questions about those files.
+Local chat UI for Ollama models (default **deepseek-r1:32b** — set the `CHAT_MODEL` and `EMBED_MODEL` env vars to use others). Point it at a folder (resume, notes, PDFs) and ask questions about those files.
 
 ## Run
 
@@ -14,7 +14,8 @@ uvicorn app:app --reload --host 127.0.0.1 --port 8000
 
 Open http://127.0.0.1:8000, paste a folder path, click **Index folder**, then chat.
 
-Ollama must already be running with `deepseek-r1:32b` and `nomic-embed-text`.
+Ollama must already be running with your chat model and `nomic-embed-text`
+(defaults: `deepseek-r1:32b`).
 
 Supported files: `.txt`, `.md`, `.pdf`, `.docx`, `.csv`, `.json`. Folders like `.git` and `.venv` are skipped.
 
